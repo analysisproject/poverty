@@ -186,8 +186,7 @@ line_tab, area_tab, bubble_tab = st.tabs([
 with line_tab:
     st.subheader("Share of population living in extreme poverty")
     st.write(
-        "The chart starts playing automatically when the page loads, "
-        "and the animation speed is set faster."
+        "The chart starts automatically and extends to the right year by year."
     )
 
     if not selected_countries:
@@ -198,13 +197,13 @@ with line_tab:
 
         years_for_anim = sorted(line_df["Year"].astype(int).unique().tolist())
         first_year = years_for_anim[0]
+        last_year = years_for_anim[-1]
 
         y_max = line_df["Share of population in poverty ($3 a day)"].max()
         y_max = min(100, y_max + 5)
 
         fig_line = go.Figure()
 
-        # initial traces
         init_df = line_df[line_df["Year"] <= first_year]
 
         for country in selected_countries:
@@ -225,7 +224,6 @@ with line_tab:
                 )
             )
 
-        # frames with dynamic x-axis range
         frames = []
         for yr in years_for_anim:
             frame_traces = []
@@ -252,11 +250,7 @@ with line_tab:
             frames.append(
                 go.Frame(
                     data=frame_traces,
-                    name=str(yr),
-                    layout=go.Layout(
-                        xaxis=dict(range=[first_year, yr]),
-                        yaxis=dict(range=[0, y_max]),
-                    ),
+                    name=str(yr)
                 )
             )
 
@@ -269,7 +263,7 @@ with line_tab:
             margin=dict(l=40, r=40, t=30, b=20),
             xaxis=dict(
                 title="",
-                range=[first_year, first_year + 1],
+                range=[first_year, last_year],   # 전체 기간 고정
                 tickmode="linear",
                 dtick=5,
             ),
@@ -294,8 +288,8 @@ with line_tab:
                             args=[
                                 None,
                                 dict(
-                                    frame=dict(duration=250, redraw=True),
-                                    transition=dict(duration=80),
+                                    frame=dict(duration=180, redraw=True),
+                                    transition=dict(duration=50),
                                     fromcurrent=True,
                                 ),
                             ],
@@ -339,7 +333,6 @@ with line_tab:
             ],
         )
 
-        # auto_play=True가 핵심
         html_str = fig_line.to_html(
             full_html=False,
             include_plotlyjs="cdn",

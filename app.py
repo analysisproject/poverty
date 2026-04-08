@@ -251,7 +251,7 @@ with line_tab:
                             layout=go.Layout(
                                 xaxis=dict(range=[min_year, yr])
                             )
-                        )
+                        ))
 
         fig_line.frames = frames
 

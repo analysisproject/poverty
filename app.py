@@ -245,7 +245,13 @@ with line_tab:
                     )
                 )
 
-            frames.append(go.Frame(data=frame_traces, name=str(yr)))
+            frames.append(go.Frame(
+                            data=frame_traces,
+                            name=str(yr),
+                            layout=go.Layout(
+                                xaxis=dict(range=[min_year, yr])
+                            )
+                        )
 
         fig_line.frames = frames
 

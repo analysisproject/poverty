@@ -1,166 +1,369 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
+from __future__ import annotations
+
 from pathlib import Path
 
-st.set_page_config(page_title="Poverty Animation Dashboard", layout="wide")
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
-# =========================
-# 데이터 로드
-# =========================
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
+st.set_page_config(
+    page_title="Extreme Poverty Dashboard",
+    page_icon="📉",
+    layout="wide",
+)
 
-share_file = DATA_DIR / "share-of-population-in-extreme-poverty.csv"
-proj_file = DATA_DIR / "projections-extreme-poverty-wb.csv"
+DATA_DIR = Path(__file__).parent / "data"
+SHARE_FILE = DATA_DIR / "share-of-population-in-extreme-poverty.csv"
+PROJECTION_FILE = DATA_DIR / "projections-extreme-poverty-wb.csv"
+
+DEFAULT_COUNTRIES = [
+    "DR Congo",
+    "Mozambique",
+    "Malawi",
+    "Burundi",
+    "Central African Republic",
+    "Madagascar",
+]
+
+REGION_ORDER = [
+    "South Asia (WB)",
+    "East Asia and Pacific (WB)",
+    "Sub-Saharan Africa (WB)",
+    "MENA, Afghanistan and Pakistan (WB)",
+    "Latin America and Caribbean (WB)",
+    "Europe and Central Asia (WB)",
+    "North America (WB)",
+]
+
+OWID_COLORS = {
+    "DR Congo": "#8c2d3e",
+    "Mozambique": "#2f9e73",
+    "Malawi": "#7a4bc2",
+    "Burundi": "#4878b6",
+    "Central African Republic": "#d95f02",
+    "Madagascar": "#a97142",
+    "South Asia (WB)": "#a97142",
+    "East Asia and Pacific (WB)": "#e58b7a",
+    "Sub-Saharan Africa (WB)": "#5b8cc9",
+    "MENA, Afghanistan and Pakistan (WB)": "#557a2b",
+    "Latin America and Caribbean (WB)": "#8b61c2",
+    "Europe and Central Asia (WB)": "#4ab2b2",
+    "North America (WB)": "#c84b4b",
+}
+
 
 @st.cache_data
-def load_data():
-    df_share = pd.read_csv(share_file)
-    df_proj = pd.read_csv(proj_file)
-    return df_share, df_proj
+def load_share_data() -> pd.DataFrame:
+    df = pd.read_csv(SHARE_FILE)
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
+    df["Share of population in poverty ($3 a day)"] = pd.to_numeric(
+        df["Share of population in poverty ($3 a day)"], errors="coerce"
+    )
+    df["Population"] = pd.to_numeric(df["Population"], errors="coerce")
+    df = df.dropna(subset=["Entity", "Year"])
+    df = df[df["Year"] >= 1990].copy()
+    return df
 
-df_share, df_proj = load_data()
 
-# =========================
-# 컬럼 정리
-# =========================
-share_col = "Share of population in poverty ($3 a day)"
-pop_col = "Population"
+@st.cache_data
+def load_projection_data() -> pd.DataFrame:
+    df = pd.read_csv(PROJECTION_FILE)
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
+    df["Number of people in poverty ($3 a day)"] = pd.to_numeric(
+        df["Number of people in poverty ($3 a day)"], errors="coerce"
+    )
+    df = df.dropna(subset=["Entity", "Year", "Number of people in poverty ($3 a day)"])
+    return df
 
-df_share["Year"] = pd.to_numeric(df_share["Year"], errors="coerce")
-df_share[share_col] = pd.to_numeric(df_share[share_col], errors="coerce")
-df_share[pop_col] = pd.to_numeric(df_share[pop_col], errors="coerce")
 
-df_share = df_share.dropna(subset=["Entity", "Year", share_col, pop_col])
+share_df = load_share_data()
+projection_df = load_projection_data()
 
-# 국가 코드 있는 일반 국가만 우선 사용
-if "Code" in df_share.columns:
-    df_share = df_share[df_share["Code"].notna()].copy()
+country_df = share_df[
+    share_df["Code"].notna()
+    & (share_df["Code"].str.len() == 3)
+    & share_df["Share of population in poverty ($3 a day)"].notna()
+    & share_df["Population"].notna()
+].copy()
 
-# 너무 작은 나라까지 다 넣으면 버블이 과밀할 수 있으니 필터 옵션 제공
-min_pop = st.sidebar.slider("Minimum population", 0, 50_000_000, 1_000_000, step=500_000)
-df_anim = df_share[df_share[pop_col] >= min_pop].copy()
+country_df["Year"] = country_df["Year"].astype(int)
+all_years = sorted(country_df["Year"].unique().tolist())
+min_year, max_year = min(all_years), max(all_years)
 
-# region 비슷한 구분이 없으면 Entity 그대로 색상 쓰면 너무 복잡하므로
-# 기본은 단색 + hover 강화
-# 만약 Region 컬럼이 있다면 그걸 사용
-color_col = "Region" if "Region" in df_anim.columns else None
+if "selected_year" not in st.session_state:
+    st.session_state.selected_year = 2022 if 2022 in all_years else max_year
 
 st.title("Extreme Poverty Dashboard")
-st.caption("Play 버튼을 누르면 연도별로 버블이 자연스럽게 이동합니다.")
-
-# =========================
-# 1. Animated Bubble Chart
-# =========================
-st.subheader("1) Animated bubble chart by year")
-
-fig_anim = px.scatter(
-    df_anim.sort_values("Year"),
-    x=share_col,
-    y=pop_col,
-    animation_frame="Year",
-    animation_group="Entity",
-    size=pop_col,
-    hover_name="Entity",
-    color=color_col if color_col else None,
-    size_max=60,
-    log_y=True,
-    range_x=[0, min(100, df_anim[share_col].max() + 5)],
-    range_y=[max(1e5, df_anim[pop_col].min()), df_anim[pop_col].max() * 1.2],
-    labels={
-        share_col: "Extreme poverty share (%)",
-        pop_col: "Population"
-    },
-    title="Countries over time: poverty rate vs population"
+st.caption(
+    "Data source: World Bank Poverty and Inequality Platform / Our World in Data. "
+    "The bubble chart below now uses Plotly frames, so the Play button inside the chart "
+    "animates year-by-year transitions naturally."
 )
 
-fig_anim.update_traces(
-    marker=dict(opacity=0.75, line=dict(width=0.5, color="white")),
-    selector=dict(mode="markers")
+with st.sidebar:
+    st.header("Controls")
+
+    year_value = st.slider(
+        "Reference year for non-animated charts",
+        min_value=min_year,
+        max_value=max_year,
+        value=int(st.session_state.selected_year),
+        step=1,
+    )
+    st.session_state.selected_year = year_value
+
+    available_countries = sorted(country_df["Entity"].unique().tolist())
+    default_selected = [c for c in DEFAULT_COUNTRIES if c in available_countries]
+    selected_countries = st.multiselect(
+        "Countries for line chart",
+        options=available_countries,
+        default=default_selected,
+    )
+
+    region_options = sorted(country_df["World region according to OWID"].dropna().unique().tolist())
+    selected_regions = st.multiselect(
+        "Regions for bubble chart",
+        options=region_options,
+        default=region_options,
+    )
+
+    top_n = st.slider("Top countries table", min_value=5, max_value=20, value=10, step=1)
+    min_population = st.slider(
+        "Minimum population in animated chart",
+        min_value=0,
+        max_value=200_000_000,
+        value=500_000,
+        step=500_000,
+        help="Use this to reduce clutter in the animated bubble chart.",
+    )
+    animation_speed = st.slider(
+        "Animation speed (ms per year)",
+        min_value=200,
+        max_value=2000,
+        value=700,
+        step=100,
+    )
+    bubble_size_max = st.slider(
+        "Maximum bubble size",
+        min_value=20,
+        max_value=90,
+        value=55,
+        step=5,
+    )
+
+selected_year = int(st.session_state.selected_year)
+selected_year_df = country_df[
+    (country_df["Year"] == selected_year)
+    & (country_df["World region according to OWID"].isin(selected_regions))
+].copy()
+
+metric_cols = st.columns(4)
+metric_cols[0].metric("Selected year", f"{selected_year}")
+metric_cols[1].metric(
+    "Countries with data",
+    f"{selected_year_df['Entity'].nunique():,}",
 )
+if not selected_year_df.empty:
+    weighted_share = (
+        (selected_year_df["Share of population in poverty ($3 a day)"] * selected_year_df["Population"]).sum()
+        / selected_year_df["Population"].sum()
+    )
+    metric_cols[2].metric("Population-weighted poverty share", f"{weighted_share:.1f}%")
+    max_row = selected_year_df.nlargest(1, "Share of population in poverty ($3 a day)").iloc[0]
+    metric_cols[3].metric("Highest country in selected year", max_row["Entity"])
+else:
+    metric_cols[2].metric("Population-weighted poverty share", "N/A")
+    metric_cols[3].metric("Highest country in selected year", "N/A")
 
-fig_anim.update_layout(
-    template="plotly_white",
-    height=750,
-    xaxis=dict(title="Share of population in poverty (%)"),
-    yaxis=dict(title="Population (log scale)"),
-    legend_title_text="",
-    margin=dict(l=40, r=40, t=80, b=40)
-)
+line_tab, area_tab, bubble_tab = st.tabs([
+    "Country trends",
+    "Regional totals",
+    "Animated playback",
+])
 
-# 애니메이션 속도 조정
-fig_anim.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 500
-fig_anim.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 300
-fig_anim.layout.updatemenus[0].buttons[0].args[1]["fromcurrent"] = True
+with line_tab:
+    st.subheader("Share of population living in extreme poverty")
+    st.write("Selected countries are shown as line charts. The dashed line marks the reference year from the sidebar.")
 
-st.plotly_chart(fig_anim, use_container_width=True)
+    if not selected_countries:
+        st.info("Select at least one country from the sidebar.")
+    else:
+        line_df = country_df[country_df["Entity"].isin(selected_countries)].copy()
 
-# =========================
-# 2. 선택 국가 추이
-# =========================
-st.subheader("2) Country trend")
+        fig_line = px.line(
+            line_df,
+            x="Year",
+            y="Share of population in poverty ($3 a day)",
+            color="Entity",
+            markers=True,
+            color_discrete_map=OWID_COLORS,
+        )
+        fig_line.add_vline(x=selected_year, line_dash="dash", line_color="gray")
+        fig_line.update_traces(
+            hovertemplate="<b>%{fullData.name}</b><br>Year: %{x}<br>Poverty share: %{y:.1f}%<extra></extra>"
+        )
+        fig_line.update_layout(
+            template="plotly_white",
+            height=620,
+            legend_title_text="",
+            margin=dict(l=40, r=40, t=30, b=20),
+            yaxis_title="Share of population in poverty (%)",
+            xaxis_title="",
+        )
+        fig_line.update_yaxes(range=[0, 100], ticksuffix="%")
+        st.plotly_chart(fig_line, use_container_width=True)
 
-default_countries = ["India", "Nigeria", "Ethiopia", "DR Congo", "Bangladesh"]
-available = sorted(df_share["Entity"].unique().tolist())
-default_selected = [c for c in default_countries if c in available][:5]
+with area_tab:
+    st.subheader("Total population living in extreme poverty by world region")
+    st.write("The dotted vertical line marks the start of the projection segment in the source chart.")
 
-selected_countries = st.multiselect(
-    "Select countries",
-    options=available,
-    default=default_selected
-)
+    area_df = projection_df[projection_df["Entity"].isin(REGION_ORDER)].copy()
+    area_df["Entity"] = pd.Categorical(area_df["Entity"], categories=REGION_ORDER, ordered=True)
+    area_df = area_df.sort_values(["Year", "Entity"])
 
-if selected_countries:
-    plot_df = df_share[df_share["Entity"].isin(selected_countries)].copy()
-
-    fig_line = px.line(
-        plot_df,
+    fig_area = px.area(
+        area_df,
         x="Year",
-        y=share_col,
+        y="Number of people in poverty ($3 a day)",
         color="Entity",
-        markers=True,
-        labels={"Year": "Year", share_col: "Extreme poverty share (%)"},
-        title="Country trends in extreme poverty"
+        category_orders={"Entity": REGION_ORDER},
+        color_discrete_map=OWID_COLORS,
     )
-
-    fig_line.update_layout(
+    fig_area.add_vline(x=2023, line_dash="dot", line_color="gray")
+    fig_area.add_annotation(
+        x=2023,
+        y=area_df["Number of people in poverty ($3 a day)"].max() * 1.02,
+        text="Projections by the World Bank",
+        showarrow=False,
+        font=dict(color="gray", size=12),
+    )
+    fig_area.add_vline(x=selected_year, line_dash="dash", line_color="black", opacity=0.5)
+    fig_area.update_traces(
+        hovertemplate="<b>%{fullData.name}</b><br>Year: %{x}<br>People in poverty: %{y:,.0f}<extra></extra>"
+    )
+    fig_area.update_layout(
         template="plotly_white",
-        height=500,
-        legend_title_text=""
+        height=620,
+        legend_title_text="",
+        margin=dict(l=40, r=40, t=30, b=20),
+        yaxis_title="People in poverty",
+        xaxis_title="",
     )
-    st.plotly_chart(fig_line, use_container_width=True)
+    fig_area.update_yaxes(tickformat="~s")
+    st.plotly_chart(fig_area, use_container_width=True)
 
-# =========================
-# 3. 특정 연도 스냅샷
-# =========================
-st.subheader("3) Snapshot by year")
+with bubble_tab:
+    st.subheader("Animated year-by-year bubble chart")
+    st.write(
+        "This chart uses Plotly animation frames. Press Play inside the chart to move year by year naturally. "
+        "Bubble size reflects population, the x-axis is population on a log scale, and the y-axis is the poverty share."
+    )
 
-year_list = sorted(df_share["Year"].dropna().unique().astype(int).tolist())
-selected_year = st.slider(
-    "Choose a year for snapshot",
-    min_value=min(year_list),
-    max_value=max(year_list),
-    value=min(year_list),
-    step=1
-)
+    bubble_cols = st.columns([2.2, 1])
 
-snap_df = df_share[df_share["Year"] == selected_year].copy()
-snap_df = snap_df.sort_values(share_col, ascending=False).head(20)
+    with bubble_cols[0]:
+        animated_df = country_df[
+            country_df["World region according to OWID"].isin(selected_regions)
+            & (country_df["Population"] > 0)
+            & (country_df["Population"] >= min_population)
+        ].copy()
 
-fig_bar = px.bar(
-    snap_df,
-    x=share_col,
-    y="Entity",
-    orientation="h",
-    labels={share_col: "Extreme poverty share (%)", "Entity": ""},
-    title=f"Top 20 countries by poverty share in {selected_year}"
-)
+        if animated_df.empty:
+            st.warning("No data available for the current filters.")
+        else:
+            animated_df = animated_df.sort_values(["Year", "Entity"])
+            animated_df["year_label"] = animated_df["Year"].astype(str)
 
-fig_bar.update_layout(
-    template="plotly_white",
-    height=700,
-    yaxis={"categoryorder": "total ascending"}
-)
+            fig_bubble = px.scatter(
+                animated_df,
+                x="Population",
+                y="Share of population in poverty ($3 a day)",
+                size="Population",
+                color="World region according to OWID",
+                hover_name="Entity",
+                hover_data={
+                    "Year": True,
+                    "Population": ":,.0f",
+                    "Share of population in poverty ($3 a day)": ":.1f",
+                    "World region according to OWID": True,
+                },
+                animation_frame="year_label",
+                animation_group="Entity",
+                size_max=bubble_size_max,
+                log_x=True,
+                opacity=0.8,
+                labels={
+                    "Population": "Population (log scale)",
+                    "Share of population in poverty ($3 a day)": "Poverty share (%)",
+                    "World region according to OWID": "Region",
+                    "year_label": "Year",
+                },
+                color_discrete_sequence=px.colors.qualitative.Set2,
+                range_y=[0, 100],
+                range_x=[
+                    max(1_000, float(animated_df["Population"].min()) * 0.9),
+                    float(animated_df["Population"].max()) * 1.1,
+                ],
+            )
 
-st.plotly_chart(fig_bar, use_container_width=True)
+            fig_bubble.update_traces(
+                marker=dict(line=dict(width=0.5, color="white")),
+                hovertemplate=(
+                    "<b>%{hovertext}</b><br>Year: %{customdata[0]}<br>"
+                    "Population: %{x:,.0f}<br>Poverty share: %{y:.1f}%<br>"
+                    "Region: %{customdata[3]}<extra></extra>"
+                ),
+            )
+
+            # Make animation smooth and persistent from current frame
+            if fig_bubble.layout.updatemenus:
+                play_button = fig_bubble.layout.updatemenus[0].buttons[0]
+                play_button.args[1]["frame"]["duration"] = animation_speed
+                play_button.args[1]["transition"]["duration"] = min(400, animation_speed - 50)
+                play_button.args[1]["fromcurrent"] = True
+
+                pause_button = fig_bubble.layout.updatemenus[0].buttons[1]
+                pause_button.args[1]["frame"]["duration"] = 0
+                pause_button.args[1]["transition"]["duration"] = 0
+
+            fig_bubble.update_layout(
+                template="plotly_white",
+                height=700,
+                margin=dict(l=40, r=20, t=30, b=20),
+                legend_title_text="",
+            )
+            fig_bubble.update_yaxes(range=[0, 100], ticksuffix="%")
+            fig_bubble.update_xaxes(tickformat="~s")
+            st.plotly_chart(fig_bubble, use_container_width=True)
+
+    with bubble_cols[1]:
+        st.markdown(f"**Top {top_n} countries in {selected_year}**")
+        st.caption("The table follows the sidebar reference year, so you can compare the static snapshot with the animated chart.")
+        if selected_year_df.empty:
+            st.info("No data available.")
+        else:
+            top_df = (
+                selected_year_df.sort_values(
+                    "Share of population in poverty ($3 a day)", ascending=False
+                )[[
+                    "Entity",
+                    "Share of population in poverty ($3 a day)",
+                    "Population",
+                    "World region according to OWID",
+                ]]
+                .head(top_n)
+                .rename(
+                    columns={
+                        "Entity": "Country",
+                        "Share of population in poverty ($3 a day)": "Poverty share (%)",
+                        "Population": "Population",
+                        "World region according to OWID": "Region",
+                    }
+                )
+            )
+            top_df["Poverty share (%)"] = top_df["Poverty share (%)"].map(lambda x: f"{x:.2f}")
+            top_df["Population"] = top_df["Population"].map(lambda x: f"{x:,.0f}")
+            st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+st.divider()
+st.markdown("**Run locally:** `pip install -r requirements.txt` then `streamlit run app.py`")

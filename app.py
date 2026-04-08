@@ -294,8 +294,8 @@ with line_tab:
                             args=[
                                 None,
                                 dict(
-                                    frame=dict(duration=180, redraw=True),
-                                    transition=dict(duration=50),
+                                    frame=dict(duration=250, redraw=True),
+                                    transition=dict(duration=80),
                                     fromcurrent=True,
                                 ),
                             ],

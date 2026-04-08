@@ -183,25 +183,71 @@ line_tab, area_tab, bubble_tab = st.tabs([
 
 with line_tab:
     st.subheader("Share of population living in extreme poverty")
-    st.write("Selected countries are shown as line charts. The dashed line marks the reference year from the sidebar.")
+    st.write(
+        "Press Play inside the chart to animate the country trends year by year. "
+        "Each frame shows the lines accumulated up to that year."
+    )
 
     if not selected_countries:
         st.info("Select at least one country from the sidebar.")
     else:
         line_df = country_df[country_df["Entity"].isin(selected_countries)].copy()
+        line_df = line_df.sort_values(["Entity", "Year"])
 
-        fig_line = px.line(
-            line_df,
-            x="Year",
-            y="Share of population in poverty ($3 a day)",
-            color="Entity",
-            markers=True,
-            color_discrete_map=OWID_COLORS,
-        )
-        fig_line.add_vline(x=selected_year, line_dash="dash", line_color="gray")
-        fig_line.update_traces(
-            hovertemplate="<b>%{fullData.name}</b><br>Year: %{x}<br>Poverty share: %{y:.1f}%<extra></extra>"
-        )
+        years_for_anim = sorted(line_df["Year"].unique().tolist())
+
+        fig_line = go.Figure()
+
+        # initial traces: first year only
+        first_year = years_for_anim[0]
+        init_df = line_df[line_df["Year"] <= first_year]
+
+        for country in selected_countries:
+            cdf = init_df[init_df["Entity"] == country]
+            fig_line.add_trace(
+                go.Scatter(
+                    x=cdf["Year"],
+                    y=cdf["Share of population in poverty ($3 a day)"],
+                    mode="lines+markers",
+                    name=country,
+                    line=dict(color=OWID_COLORS.get(country, None), width=2),
+                    marker=dict(size=6),
+                    hovertemplate=(
+                        f"<b>{country}</b><br>"
+                        "Year: %{x}<br>"
+                        "Poverty share: %{y:.1f}%<extra></extra>"
+                    ),
+                )
+            )
+
+        # frames: cumulative by year
+        frames = []
+        for yr in years_for_anim:
+            frame_traces = []
+            frame_df = line_df[line_df["Year"] <= yr]
+
+            for country in selected_countries:
+                cdf = frame_df[frame_df["Entity"] == country]
+                frame_traces.append(
+                    go.Scatter(
+                        x=cdf["Year"],
+                        y=cdf["Share of population in poverty ($3 a day)"],
+                        mode="lines+markers",
+                        name=country,
+                        line=dict(color=OWID_COLORS.get(country, None), width=2),
+                        marker=dict(size=6),
+                        hovertemplate=(
+                            f"<b>{country}</b><br>"
+                            "Year: %{x}<br>"
+                            "Poverty share: %{y:.1f}%<extra></extra>"
+                        ),
+                    )
+                )
+
+            frames.append(go.Frame(data=frame_traces, name=str(yr)))
+
+        fig_line.frames = frames
+
         fig_line.update_layout(
             template="plotly_white",
             height=620,
@@ -209,8 +255,68 @@ with line_tab:
             margin=dict(l=40, r=40, t=30, b=20),
             yaxis_title="Share of population in poverty (%)",
             xaxis_title="",
+            yaxis=dict(range=[0, 100], ticksuffix="%"),
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    x=1.0,
+                    y=1.15,
+                    xanchor="right",
+                    yanchor="top",
+                    direction="left",
+                    buttons=[
+                        dict(
+                            label="▶ Play",
+                            method="animate",
+                            args=[
+                                None,
+                                dict(
+                                    frame=dict(duration=700, redraw=True),
+                                    transition=dict(duration=300),
+                                    fromcurrent=True,
+                                ),
+                            ],
+                        ),
+                        dict(
+                            label="⏸ Pause",
+                            method="animate",
+                            args=[
+                                [None],
+                                dict(
+                                    frame=dict(duration=0, redraw=False),
+                                    transition=dict(duration=0),
+                                    mode="immediate",
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+            ],
+            sliders=[
+                dict(
+                    active=0,
+                    currentvalue={"prefix": "Year: "},
+                    pad={"t": 50},
+                    steps=[
+                        dict(
+                            method="animate",
+                            args=[
+                                [str(yr)],
+                                dict(
+                                    mode="immediate",
+                                    frame=dict(duration=0, redraw=True),
+                                    transition=dict(duration=0),
+                                ),
+                            ],
+                            label=str(yr),
+                        )
+                        for yr in years_for_anim
+                    ],
+                )
+            ],
         )
-        fig_line.update_yaxes(range=[0, 100], ticksuffix="%")
+
         st.plotly_chart(fig_line, use_container_width=True)
 
 with area_tab:
